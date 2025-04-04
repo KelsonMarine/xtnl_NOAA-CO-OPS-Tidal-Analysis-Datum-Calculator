@@ -23,7 +23,33 @@ from dateutil.parser import parse
 import sys
 import configparser
 from time import gmtime, strftime
+import csv
+import geopandas as gpd
+import pandas as pd
+from shapely.geometry import Point
+import pathlib
 
+def write_tidal_datums(station: str, datum_dict: dict, path: pathlib.Path, lat: float, lon: float, units: str = None, epsg: int = 4326):
+    """
+    Save tidal datum values to a shapefile with geographic location.
+
+    Parameters:
+    - datum_dict: dict of datum names and values (float or (float, unit))
+    - output_path: str, output .shp file path (omit extension, .shp will be added)
+    - lat, lon: float, coordinates of the station
+    - units: str, default units for values if not included in tuple
+    - epsg: int, coordinate reference system (default: 4326 for WGS84)
+    """
+    datum_dict['station'] = station
+    datum_dict['units'] = Units
+    gdf = gpd.GeoDataFrame(
+        pd.DataFrame([datum_dict]), 
+        geometry=[Point(lon,lat)], 
+        crs="EPSG:4326")
+    gdf.to_file(path.with_suffix('.shp'), driver="ESRI Shapefile", index=False)
+    gdf['longitude'] = gdf['geometry'].x
+    gdf['latitude'] = gdf['geometry'].y
+    gdf.to_csv(path.with_suffix('.csv'), index=False)
 
 def Get_Method(xtimes):
     #This function chooses method to use
@@ -192,55 +218,79 @@ def read_config(config_file, section):
 
     return params
 
-
-# Obtain parameters info from config file #
-dcalc_params = read_config(CONFIG_FILE, "par")
-Pick_Method = dcalc_params['pick_method']
-fname = dcalc_params['fname']
-Control_Station_ID = dcalc_params['control_station']
-Method_Option = dcalc_params['method_option']
-Units = dcalc_params['units']
-Time_Zone = dcalc_params['time_zone']
-Subordinate_Lon = dcalc_params['subordinate_lon']
-Subordinate_Lat = dcalc_params['subordinate_lat']
+with open('tmp.txt', 'w') as f:
+    f.write(str(sys.argv))
 
 
-"""Process the command line arguments
-SDC.py  filename  control  method  time_zone  units  datum  lat  lon
-Where:
-    filename = filespec of input to use
-    control  = 7 character control station ID (or 'None')
-    method  = "AUTO', 'TBYT' or 'FRED'
-    time_zone = some tring with the gmt offset at the end e.g. UST5
-    units = 'Meters, Centimeters, Millimeters, Feet, Inches
-lat  = lattitude of station
-lon  = longitude of station"""
+if len(sys.argv) == 1:
+    # Obtain parameters info from config file #
+    dcalc_params = read_config(CONFIG_FILE, "par")
+    Pick_Method = dcalc_params['pick_method']
+    fname = dcalc_params['fname']
+    Control_Station_ID = dcalc_params['control_station']
+    Method_Option = dcalc_params['method_option']
+    Units = dcalc_params['units']
+    Time_Zone = dcalc_params['time_zone']
+    Subordinate_Lon = dcalc_params['subordinate_lon']
+    Subordinate_Lat = dcalc_params['subordinate_lat']
+    path = dcalc_params['savedir']
+
+else:
+
+    """Process the command line arguments
+    SDC.py  filename  control  method  time_zone  units  lat  lon savedir
+    Where:
+        filename = filespec of input to use
+        control  = 7 character control station ID (or 'None')
+        pick_method = 'PolyFit'
+        method  = "AUTO', 'TBYT' or 'FRED'
+        time_zone = some tring with the gmt offset at the end e.g. UST5
+        units = 'Meters, Centimeters, Millimeters, Feet, Inches
+        lat  = lattitude of station
+        lon  = longitude of station"""
+    if len(sys.argv) > 1:
+        fname = sys.argv[1]
+    if len(sys.argv) > 2:
+        Control_Station_ID = sys.argv[2]
+    if len(sys.argv) > 3:
+        Pick_Method = sys.argv[3]
+    if len(sys.argv) > 4:
+        Method_Option = sys.argv[4]
+    if len(sys.argv) > 5:
+        Time_Zone = sys.argv[5]
+    if len(sys.argv) > 6:
+        Units = sys.argv[6]
+    if len(sys.argv) > 7:
+        Subordinate_Lat = sys.argv[7]
+    if len(sys.argv) > 8:
+        Subordinate_Lon = sys.argv[8]
+    if len(sys.argv) > 9:
+        path = pathlib.Path(sys.argv[9])
+        
+
+    # --- Create config.cfg in path
+    with open(path / "config.cfg", "w") as f:
+        f.write("[par]\n")
+        f.write(f"pick_method = {Pick_Method}\n") 
+        f.write(f"fname = {fname}\n") 
+        f.write(f"control_station = {Control_Station_ID}\n") 
+        f.write(f"method_option = {Method_Option}\n") 
+        f.write(f"units = {Units}\n") 
+        f.write(f"time_zone = {Time_Zone}\n") 
+        f.write(f"subordinate_lon = {Subordinate_Lon}\n") 
+        f.write(f"subordinate_lat = {Subordinate_Lat}\n") 
+        f.write(f"savedir = {path}\n") 
+
+if not path:
+    # fallback if path is missing
+    path = pathlib.Path('./')
+
 remaining_gaps = 0
 
-if len(sys.argv) > 1:
-   fname = sys.argv[1]
-if len(sys.argv) > 2:
-    Control_Station_ID = sys.argv[2]
-if len(sys.argv) > 3:
-    Method_Option = sys.argv[3]
-if len(sys.argv) > 4:
-    Time_Zone = sys.argv[4]
-if len(sys.argv) > 5:
-    Units = sys.argv[5]
-if len(sys.argv) > 6:
-    Subordinate_Lat = sys.argv[6]
-if len(sys.argv) > 7:
-    Subordinate_Lon = sys.argv[7]
-
-#get directory of the input filespec to use for the output files.
-end_of_path = fname.rfind('/')
-if end_of_path > -1:
-    path = fname[0:end_of_path+1]
-else:
-    path = ''
 
 #Open the output file
-OutFile = open(path + 'SDC.out', 'w')
+fname_out = 'SDC.out'
+OutFile = open(path / fname_out, 'w')
 
 if Control_Station_ID == 'None' or len(Control_Station_ID) < 7:
     Method_Option = 'FRED'
@@ -260,7 +310,7 @@ if fname == '':
     exit(-1)
  
 SDC_Print (['Run Time: ', strftime("%Y-%m-%d %H:%M:%S", gmtime())])
-SDC_Print(['Using ', fname[end_of_path+1:]])
+SDC_Print(['Using ', fname])
 f = open(fname, 'r')
 
 #Get time offset if subordinate is not gmt
@@ -511,7 +561,7 @@ SDC_Print([low_types.count('LL'), ' Lower Lows'])
 SDC_Print([' '])
 
 #Store the highs and lows in a file
-f = open(path +  'High-Lows.csv', 'w')
+f = open(path /  'High-Lows.csv', 'w')
 li=0
 hi=0
 while ((hi < len(highs)) and (li < len(lows))):
@@ -584,7 +634,7 @@ for m in range(m1,m2+1):
     xax.set_major_locator(majorLocator)
     #format major xtick label
     xax.set_major_formatter(mdates.DateFormatter('%m/%d/%y'))
-    plt.savefig(path + 'Month' + str(pn))
+    plt.savefig(path / f'Month_{pn}')
     pn = pn + 1
 
 SDC_Print([pn-1, ' Monthly plots generated\n'])
@@ -642,7 +692,7 @@ MLW  = MLW  / nlows
 
 if Calc_Method == 'FRED':
     SDC_Print([' '])
-    SDC_Print([' TIDAL Datums by Arithmetic Mean of Your Data (First Reduction):'])
+    SDC_Print(['TIDAL Datums by Arithmetic Mean of Your Data (First Reduction):'])
     SDC_Print(['HWL  = ', fmt % HWL, '  (' + HWL_DT.strftime("%Y/%m/%d %H:%M") + ')'])
     SDC_Print(['MHHW = ', fmt % MHHW])
     SDC_Print(['MHW  = ', fmt % MHW])
@@ -658,6 +708,22 @@ if Calc_Method == 'FRED':
     SDC_Print(['LWL  = ', fmt % LWL , '  (' + LWL_DT.strftime("%Y/%m/%d %H:%M") + ')'])
     SDC_Print([' '])
 
+    # construct dictionary 
+    tidal_datum_dict = {
+        "HWL": float(fmt % HWL),
+        "MHHW": float(fmt % MHHW),
+        "MHW": float(fmt % MHW),
+        "DTL": float(fmt % (0.5 * (MHHW + MLLW))),
+        "MTL": float(fmt % (0.5 * (MHW + MLW))),
+        "MSL": float(fmt % Mean_Level),
+        "MLW": float(fmt % MLW),
+        "MLLW": float(fmt % MLLW),
+        "DHQ": float(fmt % (MHHW - MHW)),
+        "DLQ": float(fmt % (MLW - MLLW)),
+        "MN": float(fmt % (MHW - MLW)),
+        "GT": float(fmt % (MHHW - MLLW)),
+        "LWL": float(fmt % LWL),
+    }
 
 if Calc_Method == 'MMSC' or Calc_Method == 'TBYT':
 #Get Accepted Datums for Control Station
@@ -1030,7 +1096,7 @@ if Calc_Method == 'TBYT':
 
     #Get the Subordinate Tides
     HL_Subordinate = []
-    f = open(path + 'High-Lows.csv', 'r')
+    f = open(path / 'High-Lows.csv', 'r')
     for line in f:
         Vals = line.split(',')
         HL_Subordinate.append([datetime.strptime(Vals[0], "%Y-%m-%d %H:%M"), float(Vals[1]), Vals[2].strip()])
@@ -1223,6 +1289,12 @@ if Calc_Method == 'TBYT':
 
 SDC_Print(['\n', Units])
 SDC_Print(['\nThat is all.'])
-OutFile.close
-exit(1)
+SDC_Print([f'\n{path}'])
+
+OutFile.close()
+
+# add some extra outputs from "FRED"
+write_tidal_datums(fname, tidal_datum_dict, path / "SDC.out", Subordinate_Lat, Subordinate_Lon, units=Units, epsg=4326)
+
+exit(0)
 
